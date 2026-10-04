@@ -1,0 +1,239 @@
+{
+  "name": "Worker - Identificación de Cliente",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "session_id"
+            },
+            {
+              "name": "nombre"
+            },
+            {
+              "name": "apellido"
+            },
+            {
+              "name": "email"
+            },
+            {
+              "name": "telefono"
+            }
+          ]
+        }
+      },
+      "id": "31dfe7f2-9397-4ca2-8d76-a737f8582fda",
+      "name": "Entrada: Contrato Identificación",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Fusiona los datos guardados de la sesión con los que llegan en el contrato y los valida.\n// Solo se aceptan valores válidos; los inválidos se informan y no pisan lo guardado.\nconst entrada = $('Entrada: Contrato Identificación').first().json;\nconst registro = $input.first().json || {};\nif (registro.error) throw new Error('No se pudo leer la sesión en NocoDB: ' + String(registro.error.message ?? registro.error));\n// Registro de la tabla Memoria_Clientes: { id, fields: { Nombre, Apellido, Email, Telefono, Identificado, ... } }\nconst f = registro.fields || {};\nconst guardado = { nombre: f.Nombre, apellido: f.Apellido, email: f.Email, telefono: f.Telefono, estado: f.Identificado ? 'IDENTIFICADO' : '' };\nconst limpiar = (v) => (v === undefined || v === null ? '' : String(v).trim());\nconst capitalizar = (s) => s.toLowerCase().replace(/(^|[\\s'-])(\\p{L})/gu, (m, sep, l) => sep + l.toUpperCase());\n\nconst CAMPOS = ['nombre', 'apellido', 'email', 'telefono'];\nconst ETIQUETAS = { nombre: 'nombre', apellido: 'apellido', email: 'correo electrónico', telefono: 'teléfono' };\n\nconst actual = Object.fromEntries(CAMPOS.map((c) => [c, limpiar(guardado[c])]));\nconst nuevos = {};\nconst invalidos = [];\n\nfor (const c of CAMPOS) {\n  let v = limpiar(entrada[c]);\n  if (!v) continue;\n  if (c === 'nombre' || c === 'apellido') {\n    v = v.replace(/\\s+/g, ' ');\n    if (!/^\\p{L}[\\p{L}\\s'.-]{0,59}$/u.test(v)) { invalidos.push({ campo: c, valor: v, motivo: 'solo puede contener letras' }); continue; }\n    v = capitalizar(v);\n  }\n  if (c === 'email') {\n    v = v.toLowerCase();\n    if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]{2,}$/.test(v)) { invalidos.push({ campo: c, valor: v, motivo: 'revisá el formato' }); continue; }\n  }\n  if (c === 'telefono') {\n    const digitos = v.replace(/\\D/g, '');\n    if (digitos.length < 8 || digitos.length > 15) { invalidos.push({ campo: c, valor: v, motivo: 'debe tener entre 8 y 15 dígitos' }); continue; }\n    v = (v.startsWith('+') ? '+' : '') + digitos;\n  }\n  nuevos[c] = v;\n}\n\nconst cliente = { ...actual, ...nuevos };\nconst faltantes = CAMPOS.filter((c) => !cliente[c]);\nconst identificado = faltantes.length === 0;\nconst estabaIdentificado = limpiar(guardado.estado) === 'IDENTIFICADO';\nconst huboCambios = Object.keys(nuevos).some((c) => nuevos[c] !== actual[c]);\nconst ahora = $now.setZone('America/Argentina/Buenos_Aires').toFormat('yyyy-MM-dd HH:mm:ss');\n\nconst lista = (arr) => (arr.length <= 1 ? arr.join('') : arr.slice(0, -1).join(', ') + ' y ' + arr[arr.length - 1]);\nconst MENU = '¿En qué te puedo ayudar hoy?\\n\\n1️⃣ **Gestionar un turno** (consultar disponibilidad o reservar)\\n2️⃣ **Consultar productos o armar un presupuesto**';\n\nconst partes = [];\nif (invalidos.length) {\n  partes.push(invalidos.map((i) => `El ${ETIQUETAS[i.campo]} \"${i.valor}\" no es válido (${i.motivo}).`).join(' '));\n}\nif (identificado) {\n  if (estabaIdentificado) partes.push(huboCambios ? `Listo, ${cliente.nombre}: actualicé tus datos.` : `${cliente.nombre}, ya tengo tus datos registrados.`);\n  else partes.push(`¡Gracias, ${cliente.nombre}! Ya registré tus datos.`);\n  partes.push(MENU);\n} else if (!Object.keys(nuevos).length && !actual.nombre && !actual.email && !invalidos.length) {\n  partes.push('¡Hola! Soy el asistente virtual de **Electrónica Cobra**. Para poder ayudarte necesito que me indiques tu **nombre, apellido, correo electrónico y teléfono**.');\n} else {\n  partes.push(`${cliente.nombre ? `Gracias, ${cliente.nombre}. ` : ''}Para continuar necesito tu ${lista(faltantes.map((c) => ETIQUETAS[c]))}.`);\n}\n\nreturn [{ json: {\n  session_id: entrada.session_id,\n  cliente,\n  faltantes,\n  invalidos,\n  identificado,\n  estado: identificado ? 'IDENTIFICADO' : 'INCOMPLETO',\n  estaba_identificado: estabaIdentificado,\n  hubo_cambios: huboCambios,\n  actualizado: ahora,\n  mensaje: partes.join('\\n\\n'),\n  // Para Guardar Sesión (NocoDB): id del registro (vacío = crear) y columnas a escribir\n  memoria_id: registro.id ?? '',\n  fields: {\n    Session_ID: entrada.session_id,\n    Nombre: cliente.nombre,\n    Apellido: cliente.apellido,\n    Email: cliente.email || null,\n    Telefono: cliente.telefono,\n    Identificado: identificado,\n    Fecha_Actualizacion: $now.toISO(),\n  },\n} }];\n"
+      },
+      "id": "eec579fb-4b60-4afb-8c88-4f33c27f1096",
+      "name": "Fusionar y Validar Datos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={\n  \"status\": \"success\",\n  \"worker\": \"identificacion\",\n  \"accion\": \"IDENTIFICAR\",\n  \"data\": {\n    \"identificado\": {{ $('Fusionar y Validar Datos').first().json.identificado }},\n    \"cliente\": {{ JSON.stringify($('Fusionar y Validar Datos').first().json.cliente) }},\n    \"faltantes\": {{ JSON.stringify($('Fusionar y Validar Datos').first().json.faltantes) }},\n    \"invalidos\": {{ JSON.stringify($('Fusionar y Validar Datos').first().json.invalidos) }}\n  },\n  \"mensaje\": {{ JSON.stringify($('Fusionar y Validar Datos').first().json.mensaje) }},\n  \"error\": null\n}",
+        "options": {}
+      },
+      "id": "d1e3caf2-7833-455b-8d74-5c518f6c7808",
+      "name": "Contrato de Salida: Éxito",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        880,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={\n  \"status\": \"error\",\n  \"worker\": \"identificacion\",\n  \"accion\": \"IDENTIFICAR\",\n  \"data\": null,\n  \"mensaje\": \"En este momento no puedo registrar tus datos. Ya derivé el caso a nuestro equipo para que lo revise.\",\n  \"error\": {\n    \"codigo\": \"IDENTIFICACION_FALLA_TECNICA\",\n    \"nodo\": {{ JSON.stringify($prevNode.name) }},\n    \"detalle\": {{ JSON.stringify(String($json.error?.message ?? $json.error ?? 'Error desconocido')) }}\n  }\n}",
+        "options": {}
+      },
+      "id": "43d83b28-4712-40a7-8878-785211c12a79",
+      "name": "Contrato de Salida: Error Técnico",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        880,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "nocoDbApiToken",
+        "resource": "row",
+        "operation": "search",
+        "workspaceId": {
+          "__rl": true,
+          "mode": "list",
+          "value": ""
+        },
+        "projectId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "ID_BASE_NOCODB"
+        },
+        "table": {
+          "__rl": true,
+          "mode": "id",
+          "value": "ID_TABLA_MEMORIA_CLIENTES"
+        },
+        "limit": 1,
+        "options": {
+          "where": "=(Session_ID,eq,{{ $json.session_id }})"
+        }
+      },
+      "id": "6b0441f1-0bff-4aac-918b-a5199b0c3c92",
+      "name": "Leer Sesión (NocoDB)",
+      "type": "n8n-nodes-base.nocoDb",
+      "typeVersion": 4,
+      "position": [
+        220,
+        0
+      ],
+      "credentials": {
+        "nocoDbApiToken": {
+          "id": "WhLIkinww9zVQLJ6",
+          "name": "NocoDB Token account"
+        }
+      },
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "authentication": "nocoDbApiToken",
+        "resource": "row",
+        "operation": "upsert",
+        "workspaceId": {
+          "__rl": true,
+          "mode": "list",
+          "value": ""
+        },
+        "projectId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "ID_BASE_NOCODB"
+        },
+        "table": {
+          "__rl": true,
+          "mode": "id",
+          "value": "ID_TABLA_MEMORIA_CLIENTES"
+        },
+        "dataToSend": "autoMapInputData",
+        "id": "={{ $json.memoria_id }}",
+        "inputsToIgnore": ""
+      },
+      "id": "5ef19bd4-991b-4a91-8003-6d1df97de930",
+      "name": "Guardar Sesión (NocoDB)",
+      "type": "n8n-nodes-base.nocoDb",
+      "typeVersion": 4,
+      "position": [
+        660,
+        -80
+      ],
+      "credentials": {
+        "nocoDbApiToken": {
+          "id": "WhLIkinww9zVQLJ6",
+          "name": "NocoDB Token account"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "onError": "continueErrorOutput"
+    }
+  ],
+  "connections": {
+    "Entrada: Contrato Identificación": {
+      "main": [
+        [
+          {
+            "node": "Leer Sesión (NocoDB)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fusionar y Validar Datos": {
+      "main": [
+        [
+          {
+            "node": "Guardar Sesión (NocoDB)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Contrato de Salida: Error Técnico",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer Sesión (NocoDB)": {
+      "main": [
+        [
+          {
+            "node": "Fusionar y Validar Datos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guardar Sesión (NocoDB)": {
+      "main": [
+        [
+          {
+            "node": "Contrato de Salida: Éxito",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Contrato de Salida: Error Técnico",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Argentina/Buenos_Aires",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "executionTimeout": 30,
+    "availableInMCP": false
+  }
+}

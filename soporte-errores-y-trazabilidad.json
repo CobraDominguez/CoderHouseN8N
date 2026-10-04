@@ -1,0 +1,556 @@
+{
+  "name": "Soporte - Errores y Trazabilidad",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Soporte · Errores y Trazabilidad\nMódulo único de observabilidad: el Manager solo resuelve la conversación y delega acá el manejo de errores y logs.\n\n**Entradas**\n- **Evento de Trazabilidad**: una llamada por mensaje desde el Manager (*Registrar Evento*, sin esperar respuesta).\n- **Error no controlado**: *Error Workflow* del Manager (fallas que no captura ninguna salida de error; solo en ejecuciones de producción).\n\n**Salidas**\n- Siempre: una fila en el **Log** (Sheets).\n- Si el estado es `error` o `escalado`: mail al **supervisor humano** (Gmail).",
+        "height": 820,
+        "width": 1300,
+        "color": 5
+      },
+      "id": "d724b4e3-71b8-4e53-b293-a1b59d1b8e98",
+      "name": "Nota: Módulo",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -460,
+        -300
+      ]
+    },
+    {
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "fecha"
+            },
+            {
+              "name": "execution_id"
+            },
+            {
+              "name": "session_id"
+            },
+            {
+              "name": "cliente"
+            },
+            {
+              "name": "telefono"
+            },
+            {
+              "name": "mensaje_usuario"
+            },
+            {
+              "name": "categoria"
+            },
+            {
+              "name": "ruta"
+            },
+            {
+              "name": "confianza"
+            },
+            {
+              "name": "motivo_triaje"
+            },
+            {
+              "name": "worker_invocado"
+            },
+            {
+              "name": "parametros_enviados"
+            },
+            {
+              "name": "respuesta_worker"
+            },
+            {
+              "name": "status"
+            },
+            {
+              "name": "respuesta_chat"
+            }
+          ]
+        }
+      },
+      "id": "4e7cf9f2-fa9c-450d-8397-db37859f77d5",
+      "name": "Entrada: Evento de Trazabilidad",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -400,
+        180
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "bc9224c9-b261-4013-92cb-ae5bee91c952",
+      "name": "Error no controlado",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        -400,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "9467a812-ca91-4760-a0c6-77200a7aafa3",
+              "name": "fecha",
+              "type": "string",
+              "value": "={{ $now.toISO() }}"
+            },
+            {
+              "id": "9e0a7fef-107f-4506-b111-fdfee780729e",
+              "name": "execution_id",
+              "type": "string",
+              "value": "={{ String($json.execution?.id ?? '') }}"
+            },
+            {
+              "id": "45b1f42c-5cbc-409d-934e-bf4837fb146e",
+              "name": "session_id",
+              "type": "string",
+              "value": ""
+            },
+            {
+              "id": "70a7a99d-3557-4c4d-966d-305a331e88f9",
+              "name": "cliente",
+              "type": "string",
+              "value": "(desconocido)"
+            },
+            {
+              "id": "faf91567-67c7-4fb4-b45b-fc59ea96c163",
+              "name": "telefono",
+              "type": "string",
+              "value": ""
+            },
+            {
+              "id": "7aad9278-b280-4b56-8fb8-182936143234",
+              "name": "mensaje_usuario",
+              "type": "string",
+              "value": ""
+            },
+            {
+              "id": "fd1e101a-c501-4584-863d-759ea73f0aa5",
+              "name": "categoria",
+              "type": "string",
+              "value": "NO_CLASIFICADA"
+            },
+            {
+              "id": "4cf82aab-8269-4f84-bef0-af19ed843da4",
+              "name": "ruta",
+              "type": "string",
+              "value": "ERROR_NO_CONTROLADO"
+            },
+            {
+              "id": "8dca3713-8736-43db-87fa-cd6fcc096248",
+              "name": "confianza",
+              "type": "number",
+              "value": "={{ 0 }}"
+            },
+            {
+              "id": "1a758d52-3ece-4337-999d-a6b841c51d38",
+              "name": "motivo_triaje",
+              "type": "string",
+              "value": "={{ ($json.execution?.lastNodeExecuted ? $json.execution.lastNodeExecuted + ': ' : '') + String($json.execution?.error?.message ?? $json.trigger?.error?.message ?? 'Error no controlado') }}"
+            },
+            {
+              "id": "72dcbf2d-f410-454a-9b50-578a9d7b0515",
+              "name": "worker_invocado",
+              "type": "string",
+              "value": "={{ $json.workflow?.name ?? '(workflow desconocido)' }}"
+            },
+            {
+              "id": "700cce6c-6b66-494e-9d34-70d411eec7db",
+              "name": "parametros_enviados",
+              "type": "string",
+              "value": "={{ JSON.stringify({ workflow_id: $json.workflow?.id, modo: $json.execution?.mode, url: $json.execution?.url }) }}"
+            },
+            {
+              "id": "17bead21-d05f-4a94-af29-7697d83208e4",
+              "name": "respuesta_worker",
+              "type": "string",
+              "value": "={{ JSON.stringify($json.execution?.error ?? $json.trigger?.error ?? {}).slice(0, 2000) }}"
+            },
+            {
+              "id": "edf35ce9-d9a2-453f-80ad-c67f7a52f917",
+              "name": "status",
+              "type": "string",
+              "value": "error"
+            },
+            {
+              "id": "082ab954-7152-42dd-a4b2-6a1e230fa184",
+              "name": "respuesta_chat",
+              "type": "string",
+              "value": ""
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "ff191ad6-48e8-4143-8bbe-d7178f5a455a",
+      "name": "Normalizar Error",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -180,
+        400
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "f0715930-bf90-4533-a954-c0a30e08affc",
+      "name": "Evento",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        40,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "ID_DE_LA_PLANILLA_GOOGLE_SHEETS",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Log",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "fecha": "={{ $json.fecha }}",
+            "execution_id": "={{ $json.execution_id }}",
+            "session_id": "={{ $json.session_id }}",
+            "cliente": "={{ $json.cliente }}",
+            "mensaje_usuario": "={{ $json.mensaje_usuario }}",
+            "categoria": "={{ $json.categoria }}",
+            "ruta": "={{ $json.ruta }}",
+            "confianza": "={{ $json.confianza }}",
+            "motivo_triaje": "={{ $json.motivo_triaje }}",
+            "worker_invocado": "={{ $json.worker_invocado }}",
+            "parametros_enviados": "={{ $json.parametros_enviados }}",
+            "respuesta_worker": "={{ $json.respuesta_worker }}",
+            "status": "={{ $json.status }}",
+            "respuesta_chat": "={{ $json.respuesta_chat }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "fecha",
+              "displayName": "fecha",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "execution_id",
+              "displayName": "execution_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "session_id",
+              "displayName": "session_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "cliente",
+              "displayName": "cliente",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "mensaje_usuario",
+              "displayName": "mensaje_usuario",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "categoria",
+              "displayName": "categoria",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "ruta",
+              "displayName": "ruta",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "confianza",
+              "displayName": "confianza",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "number",
+              "removed": false
+            },
+            {
+              "id": "motivo_triaje",
+              "displayName": "motivo_triaje",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "worker_invocado",
+              "displayName": "worker_invocado",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "parametros_enviados",
+              "displayName": "parametros_enviados",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "respuesta_worker",
+              "displayName": "respuesta_worker",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "respuesta_chat",
+              "displayName": "respuesta_chat",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "id": "aa83679e-e318-487a-840a-c5baae852433",
+      "name": "Log de Trazabilidad (Sheets)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        300,
+        40
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "wmK4BjKGstToDHLP",
+          "name": "Google Sheets account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "fcddb2f3-cddd-4d53-8a42-367f2c3092fa",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "error",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "cc4b2efe-fd84-4239-898d-227843197981",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "escalado",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "30e3c52d-410c-4a6b-b7c5-f1b70146f079",
+      "name": "¿Requiere Supervisor?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        300,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "supervisor@example.com",
+        "subject": "={{ $json.status === 'escalado' ? '[Escalamiento]' : '[Falla técnica]' }} Electrónica Cobra – {{ $json.ruta }} – {{ $json.fecha }}",
+        "emailType": "text",
+        "message": "=Se requiere intervención humana.\n\nTipo: {{ $json.status === 'escalado' ? 'Escalamiento solicitado / intención dudosa' : ($json.ruta === 'ERROR_NO_CONTROLADO' ? 'Error no controlado de un workflow' : 'Falla técnica de un componente') }}\nFecha: {{ $json.fecha }}\nExecution ID: {{ $json.execution_id }}\nSesión: {{ $json.session_id || '(sin dato)' }}\nCliente: {{ $json.cliente }}  |  Tel: {{ $json.telefono || '(sin dato)' }}\n\nMensaje del cliente:\n{{ $json.mensaje_usuario || '(sin dato)' }}\n\nClasificación: {{ $json.categoria }} (confianza {{ $json.confianza }}) — {{ $json.motivo_triaje }}\nWorker invocado: {{ $json.worker_invocado }}\n\nParámetros enviados:\n{{ $json.parametros_enviados }}\n\nRespuesta del worker:\n{{ $json.respuesta_worker }}\n\nRespuesta enviada al cliente:\n{{ $json.respuesta_chat || '(ninguna)' }}",
+        "options": {
+          "appendAttribution": false,
+          "senderName": "Asistente Electrónica Cobra"
+        }
+      },
+      "id": "efed9b2a-619a-455f-840d-dc3a05756a27",
+      "name": "Gmail: Notificar Supervisor",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        520,
+        300
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "cb4qjmvFqcy38LiC",
+          "name": "Gmail account"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "webhookId": "3d93eab4-2408-4097-9e88-c63d5f555871"
+    }
+  ],
+  "connections": {
+    "Entrada: Evento de Trazabilidad": {
+      "main": [
+        [
+          {
+            "node": "Evento",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error no controlado": {
+      "main": [
+        [
+          {
+            "node": "Normalizar Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalizar Error": {
+      "main": [
+        [
+          {
+            "node": "Evento",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evento": {
+      "main": [
+        [
+          {
+            "node": "Log de Trazabilidad (Sheets)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "¿Requiere Supervisor?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Requiere Supervisor?": {
+      "main": [
+        [
+          {
+            "node": "Gmail: Notificar Supervisor",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Argentina/Buenos_Aires",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "executionTimeout": 30,
+    "availableInMCP": false
+  }
+}

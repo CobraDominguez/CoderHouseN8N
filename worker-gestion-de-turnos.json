@@ -1,0 +1,765 @@
+{
+  "name": "Worker - Gestión de Turnos",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "accion"
+            },
+            {
+              "name": "fecha_desde"
+            },
+            {
+              "name": "fecha_hasta"
+            },
+            {
+              "name": "fecha_hora"
+            },
+            {
+              "name": "cliente_nombre"
+            },
+            {
+              "name": "cliente_apellido"
+            },
+            {
+              "name": "cliente_email"
+            },
+            {
+              "name": "cliente_telefono"
+            },
+            {
+              "name": "session_id"
+            }
+          ]
+        }
+      },
+      "id": "53aad22f-cfe4-41c0-8778-22b58cf4af72",
+      "name": "Entrada: Contrato Turnos",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Valida el contrato de entrada y arma el rango de fechas a consultar en la agenda.\nconst TZ = 'America/Argentina/Buenos_Aires';\nconst MAX_DIAS = 31; // tope técnico para no saturar el chat ni las APIs\nconst e = $input.first().json;\nconst accion = String(e.accion || '').toUpperCase().trim();\nconst hoy = DateTime.now().setZone(TZ).startOf('day');\nconst errores = [];\n\nconst fecha = (s) => {\n  if (!s) return null;\n  const d = DateTime.fromISO(String(s).slice(0, 10), { zone: TZ });\n  return d.isValid ? d.startOf('day') : null;\n};\n\nif (!['CONSULTAR_DISPONIBILIDAD', 'RESERVAR', 'CONSULTAR_TURNOS'].includes(accion)) {\n  errores.push('¿Querés consultar la disponibilidad o reservar un turno? Indicame el día (y el horario si ya lo elegiste).');\n}\n\nlet fechaHora = null;\nif (e.fecha_hora) {\n  const fh = DateTime.fromISO(String(e.fecha_hora).slice(0, 16), { zone: TZ });\n  if (fh.isValid) fechaHora = fh;\n  else errores.push(`No pude interpretar la fecha y hora \"${e.fecha_hora}\". ¿Me la indicás nuevamente?`);\n}\nif (accion === 'RESERVAR' && !fechaHora && !errores.length) {\n  errores.push('Para reservar necesito que me indiques el día y el horario del turno.');\n}\nif (accion === 'CONSULTAR_TURNOS' && !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]{2,}$/.test(String(e.cliente_email || '').trim())) {\n  errores.push('Necesito tu correo electrónico registrado para buscar tus turnos.');\n}\nif (accion === 'RESERVAR' && !(e.cliente_nombre && e.cliente_apellido && e.cliente_email)) {\n  errores.push('Me faltan tus datos de contacto para registrar el turno.');\n}\nif (!fechaHora && e.fecha_desde && !fecha(e.fecha_desde)) {\n  errores.push(`No pude interpretar la fecha \"${e.fecha_desde}\". ¿Me la indicás nuevamente?`);\n}\n\nlet desde, hasta;\nif (fechaHora) {\n  desde = fechaHora.startOf('day');\n  hasta = desde;\n} else {\n  desde = fecha(e.fecha_desde) || hoy;\n  hasta = fecha(e.fecha_hasta) || desde;\n}\nif (hasta < desde) [desde, hasta] = [hasta, desde];\nif (desde < hoy) desde = hoy; // nunca se ofrecen fechas pasadas\nif (hasta < desde) hasta = desde;\nlet recortado = false;\nif (hasta.diff(desde, 'days').days > MAX_DIAS - 1) {\n  hasta = desde.plus({ days: MAX_DIAS - 1 });\n  recortado = true;\n}\n\nreturn [{ json: {\n  valido: errores.length === 0,\n  errores,\n  accion,\n  rango_desde: desde.toISODate(),\n  rango_hasta: hasta.toISODate(),\n  time_min: desde.toISO(),\n  time_max: hasta.endOf('day').toISO(),\n  fecha_hora: fechaHora ? fechaHora.toFormat(\"yyyy-MM-dd'T'HH:mm\") : '',\n  rango_recortado: recortado,\n  anios: [...new Set([desde.year, hasta.year])].map((anio) => ({ anio })),\n  cliente: {\n    nombre: e.cliente_nombre || '',\n    apellido: e.cliente_apellido || '',\n    email: e.cliente_email || '',\n    telefono: e.cliente_telefono || '',\n  },\n  session_id: e.session_id || '',\n} }];\n"
+      },
+      "id": "68159e41-da1e-49f7-8358-ea62c12c12c4",
+      "name": "Validar Parámetros",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "31096671-01df-43a0-8cf3-f87cb2d45b57",
+              "leftValue": "={{ $json.valido }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "f2eee841-65d1-4e67-8976-96888e2e3781",
+      "name": "¿Parámetros válidos?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={\n  \"status\": \"rejected\",\n  \"worker\": \"turnos\",\n  \"accion\": {{ JSON.stringify($json.accion) }},\n  \"data\": { \"errores\": {{ JSON.stringify($json.errores) }} },\n  \"mensaje\": {{ JSON.stringify($json.errores.join('\\n')) }},\n  \"error\": null\n}",
+        "options": {}
+      },
+      "id": "5768aa3c-7d4d-4191-8bb9-9abdc053400b",
+      "name": "Contrato de Salida: Solicitud Incompleta",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        660,
+        -220
+      ]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "anios",
+        "include": "noOtherFields",
+        "options": {}
+      },
+      "id": "d9659404-362b-4153-8269-95c95a3d5567",
+      "name": "Preparar Años (Feriados)",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        660,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.argentinadatos.com/v1/feriados/{{ $json.anio }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "35579fca-cd71-43a9-8bbe-987447e83f61",
+      "name": "API Feriados (ArgentinaDatos)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "destinationFieldName": "feriados",
+        "options": {}
+      },
+      "id": "5bea7660-d0cb-4db3-807c-72d7465c9bd4",
+      "name": "Consolidar Feriados",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        1100,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "calendar",
+        "operation": "availability",
+        "calendar": {
+          "__rl": true,
+          "value": "ID_DEL_CALENDARIO@group.calendar.google.com",
+          "mode": "id"
+        },
+        "timeMin": "={{ $('Validar Parámetros').first().json.time_min }}",
+        "timeMax": "={{ $('Validar Parámetros').first().json.time_max }}",
+        "options": {
+          "outputFormat": "raw",
+          "timezone": {
+            "__rl": true,
+            "value": "America/Argentina/Buenos_Aires",
+            "mode": "id"
+          }
+        }
+      },
+      "id": "8ad33939-de94-4abe-8590-f42894df6d26",
+      "name": "Google Calendar: Horarios Ocupados",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        1320,
+        0
+      ],
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "X4ixg58y0MR7cKqE",
+          "name": "Google Calendar account"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "parameters": {
+        "jsCode": "// Calcula los turnos libres: lunes a viernes, 09:00 a 17:30 (turnos de 30 min, el último termina 18:00),\n// excluyendo feriados (los días \"puente\" SÍ se atienden), horarios pasados y horarios ocupados en Google Calendar.\nconst TZ = 'America/Argentina/Buenos_Aires';\nconst APERTURA = 9 * 60;\nconst ULTIMO_INICIO = 17 * 60 + 30;\nconst DURACION = 30;\n\nconst p = $('Validar Parámetros').first().json;\nconst feriadosApi = $('Consolidar Feriados').first().json.feriados || [];\nconst fallaFeriados = feriadosApi.find((f) => f && f.error);\nif (fallaFeriados) throw new Error('API de feriados (ArgentinaDatos): ' + String(fallaFeriados.error.message ?? fallaFeriados.error));\nconst freeBusy = $input.first().json;\nconst agenda = Object.values(freeBusy.calendars || {})[0];\nif (!agenda) throw new Error('Google Calendar no devolvió información de la agenda.');\nif (agenda.errors && agenda.errors.length) throw new Error('Google Calendar: ' + JSON.stringify(agenda.errors));\n\nconst ocupados = (agenda.busy || []).map((b) => ({ ini: DateTime.fromISO(b.start).toMillis(), fin: DateTime.fromISO(b.end).toMillis() }));\nconst feriados = {};\nfor (const f of feriadosApi) {\n  if (f && f.fecha && String(f.tipo).toLowerCase() !== 'puente') feriados[f.fecha] = f.nombre;\n}\n\nconst ahora = DateTime.now().setZone(TZ);\nconst cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);\nconst etiquetaDia = (d) => cap(d.setLocale('es').toFormat('cccc dd/LL'));\nconst fechaLarga = (d) => d.setLocale('es').toFormat(\"cccc d 'de' LLLL 'de' yyyy\");\n\nconst estadoTurno = (inicio) => {\n  const minutos = inicio.hour * 60 + inicio.minute;\n  if (inicio.weekday > 5) return { libre: false, motivo: 'atendemos de lunes a viernes' };\n  const feriado = feriados[inicio.toISODate()];\n  if (feriado) return { libre: false, motivo: `es feriado (${feriado})` };\n  if (minutos < APERTURA || minutos > ULTIMO_INICIO || inicio.minute % DURACION !== 0) {\n    return { libre: false, motivo: 'está fuera del horario de turnos (de 09:00 a 17:30, cada 30 minutos)' };\n  }\n  if (inicio <= ahora) return { libre: false, motivo: 'ese horario ya pasó' };\n  const a = inicio.toMillis();\n  const b = inicio.plus({ minutes: DURACION }).toMillis();\n  if (ocupados.some((o) => a < o.fin && b > o.ini)) return { libre: false, motivo: 'ya está reservado' };\n  return { libre: true, motivo: '' };\n};\n\nconst dias = [];\nconst sinAtencion = [];\nconst hasta = DateTime.fromISO(p.rango_hasta, { zone: TZ });\nfor (let d = DateTime.fromISO(p.rango_desde, { zone: TZ }); d <= hasta; d = d.plus({ days: 1 })) {\n  if (d.weekday > 5) continue;\n  const fecha = d.toISODate();\n  if (feriados[fecha]) { sinAtencion.push({ fecha, etiqueta: etiquetaDia(d), motivo: `Feriado: ${feriados[fecha]}` }); continue; }\n  const horarios = [];\n  for (let m = APERTURA; m <= ULTIMO_INICIO; m += DURACION) {\n    const inicio = d.set({ hour: Math.floor(m / 60), minute: m % 60, second: 0, millisecond: 0 });\n    if (estadoTurno(inicio).libre) horarios.push(inicio.toFormat('HH:mm'));\n  }\n  dias.push({ fecha, etiqueta: etiquetaDia(d), horarios });\n}\nconst totalLibres = dias.reduce((s, d) => s + d.horarios.length, 0);\n\nlet solicitado = null;\nif (p.fecha_hora) {\n  const inicio = DateTime.fromISO(p.fecha_hora, { zone: TZ });\n  const fin = inicio.plus({ minutes: DURACION });\n  const st = estadoTurno(inicio);\n  solicitado = {\n    fecha_hora: p.fecha_hora,\n    disponible: st.libre,\n    motivo: st.motivo,\n    etiqueta: `${etiquetaDia(inicio)} a las ${inicio.toFormat('HH:mm')} hs`,\n    fecha_larga: fechaLarga(inicio),\n    hora_inicio: inicio.toFormat('HH:mm'),\n    hora_fin: fin.toFormat('HH:mm'),\n    inicio_iso: inicio.toISO(),\n    fin_iso: fin.toISO(),\n  };\n}\n\n// ---------- Redacción del mensaje para el chat ----------\nconst listaDias = (lista) => lista.map((d) => `**${d.etiqueta}:** ${d.horarios.length ? d.horarios.join(' · ') : 'sin horarios disponibles'}`).join('\\n');\nconst notaFeriados = sinAtencion.length ? '\\n\\n' + sinAtencion.map((f) => `🚫 ${f.etiqueta}: ${f.motivo} (no se atiende)`).join('\\n') : '';\nconst libresDelDia = solicitado ? dias.find((d) => d.fecha === solicitado.fecha_hora.slice(0, 10)) : null;\n\nlet mensaje;\nlet status = 'success';\nconst reservar = p.accion === 'RESERVAR' && !!solicitado && solicitado.disponible;\n\nif (solicitado && !solicitado.disponible) {\n  if (p.accion === 'RESERVAR') status = 'rejected';\n  const alternativas = libresDelDia && libresDelDia.horarios.length\n    ? `\\n\\nEstos son los horarios libres de ese día:\\n${listaDias([libresDelDia])}\\n\\n¿Querés alguno de estos o preferís consultar otra fecha?`\n    : '\\n\\n¿Querés que consulte otra fecha?';\n  mensaje = `El turno del **${solicitado.etiqueta}** no está disponible: ${solicitado.motivo}.${alternativas}`;\n} else if (solicitado && p.accion === 'CONSULTAR_DISPONIBILIDAD') {\n  mensaje = `¡Buenas noticias! El turno del **${solicitado.etiqueta}** (${solicitado.hora_inicio} a ${solicitado.hora_fin} hs) está disponible. ¿Querés que lo reserve a tu nombre?`;\n} else if (reservar) {\n  mensaje = ''; // lo redacta la plantilla de confirmación tras registrar el evento\n} else if (!dias.length && !sinAtencion.length) {\n  mensaje = 'El período consultado cae en fin de semana. Atendemos de **lunes a viernes de 09:00 a 18:00**. ¿Querés que consulte otra fecha?';\n} else if (totalLibres === 0) {\n  mensaje = `No hay horarios disponibles en el período consultado.${notaFeriados}\\n\\n¿Querés que consulte otra fecha?`;\n} else {\n  const periodo = p.rango_desde === p.rango_hasta ? 'para ese día' : 'en el período consultado';\n  mensaje = `Estos son los horarios disponibles ${periodo} (turnos de 30 minutos):\\n\\n${listaDias(dias)}${notaFeriados}` +\n    (p.rango_recortado ? '\\n\\n_(Te muestro como máximo 31 días.)_' : '') +\n    '\\n\\nIndicame el día y el horario que prefieras y te lo reservo.';\n}\n\nreturn [{ json: {\n  status,\n  accion: p.accion,\n  reservar,\n  rango: { desde: p.rango_desde, hasta: p.rango_hasta, recortado: p.rango_recortado },\n  solicitado,\n  dias,\n  dias_sin_atencion: sinAtencion,\n  total_libres: totalLibres,\n  mensaje,\n} }];\n"
+      },
+      "id": "480610db-949e-4660-8bed-8eb9649c2895",
+      "name": "Calcular Horarios Libres",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        -20
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "8365f0a2-da31-4ac5-8d0d-55fd6abfce44",
+              "leftValue": "={{ $json.reservar }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "414a4f5b-0368-486c-8aa3-a6b3a236cbc8",
+      "name": "¿Reservar turno?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1760,
+        -40
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={\n  \"status\": {{ JSON.stringify($json.status) }},\n  \"worker\": \"turnos\",\n  \"accion\": {{ JSON.stringify($json.accion) }},\n  \"data\": {\n    \"rango\": {{ JSON.stringify($json.rango) }},\n    \"solicitado\": {{ JSON.stringify($json.solicitado) }},\n    \"dias\": {{ JSON.stringify($json.dias) }},\n    \"dias_sin_atencion\": {{ JSON.stringify($json.dias_sin_atencion) }},\n    \"total_libres\": {{ $json.total_libres }}\n  },\n  \"mensaje\": {{ JSON.stringify($json.mensaje) }},\n  \"error\": null\n}",
+        "options": {}
+      },
+      "id": "1c7561cb-ad5a-4186-811c-5b929ee6c14f",
+      "name": "Contrato de Salida: Disponibilidad",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1980,
+        -240
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "event",
+        "operation": "create",
+        "calendar": {
+          "__rl": true,
+          "value": "ID_DEL_CALENDARIO@group.calendar.google.com",
+          "mode": "id"
+        },
+        "start": "={{ $json.solicitado.inicio_iso }}",
+        "end": "={{ $json.solicitado.fin_iso }}",
+        "additionalFields": {
+          "summary": "=Turno – {{ $('Validar Parámetros').first().json.cliente.nombre }} {{ $('Validar Parámetros').first().json.cliente.apellido }}",
+          "description": "=Turno reservado por el asistente virtual de Electrónica Cobra.\n\nCliente: {{ $('Validar Parámetros').first().json.cliente.nombre }} {{ $('Validar Parámetros').first().json.cliente.apellido }}\nEmail: {{ $('Validar Parámetros').first().json.cliente.email }}\nTeléfono: {{ $('Validar Parámetros').first().json.cliente.telefono }}\nSesión de chat: {{ $('Validar Parámetros').first().json.session_id }}",
+          "location": "Av. Siempre Viva 123",
+          "sendUpdates": "none"
+        }
+      },
+      "id": "021d005d-0a19-4c34-865b-4d0ef967e33e",
+      "name": "Google Calendar: Registrar Turno",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        1980,
+        -20
+      ],
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "X4ixg58y0MR7cKqE",
+          "name": "Google Calendar account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "ce0cf0b3-983f-4988-8e3c-fc58d8708754",
+              "name": "asunto",
+              "type": "string",
+              "value": "=Turno confirmado – Electrónica Cobra – {{ $('Calcular Horarios Libres').first().json.solicitado.etiqueta }}"
+            },
+            {
+              "id": "d3100020-7676-48c3-8bb3-cd535b4a6fac",
+              "name": "html",
+              "type": "string",
+              "value": "=<!DOCTYPE html>\n<html lang=\"es\">\n<body style=\"margin:0;padding:0;background:#f3f4f6;font-family:Arial,Helvetica,sans-serif;color:#1f2937;\">\n  <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#f3f4f6;padding:32px 12px;\">\n    <tr><td align=\"center\">\n      <table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"max-width:600px;width:100%;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.06);\">\n        <tr><td style=\"background:#0f172a;padding:28px 32px;\">\n          <div style=\"font-size:22px;font-weight:bold;color:#ffffff;letter-spacing:0.5px;\">Electrónica Cobra</div>\n          <div style=\"font-size:13px;color:#94a3b8;margin-top:4px;\">Confirmación de turno</div>\n        </td></tr>\n        <tr><td style=\"padding:32px;\">\n          <p style=\"font-size:16px;margin:0 0 16px;\">Hola <strong>{{ $('Validar Parámetros').first().json.cliente.nombre }}</strong>,</p>\n          <p style=\"font-size:15px;line-height:1.6;margin:0 0 24px;\">Tu turno quedó <strong style=\"color:#15803d;\">confirmado</strong>. Estos son los detalles:</p>\n          <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border:1px solid #e5e7eb;border-radius:8px;font-size:15px;\">\n            <tr><td style=\"padding:12px 16px;color:#6b7280;width:40%;border-bottom:1px solid #e5e7eb;\">Fecha</td><td style=\"padding:12px 16px;font-weight:bold;border-bottom:1px solid #e5e7eb;\">{{ $('Calcular Horarios Libres').first().json.solicitado.fecha_larga.charAt(0).toUpperCase() + $('Calcular Horarios Libres').first().json.solicitado.fecha_larga.slice(1) }}</td></tr>\n            <tr><td style=\"padding:12px 16px;color:#6b7280;border-bottom:1px solid #e5e7eb;\">Horario</td><td style=\"padding:12px 16px;font-weight:bold;border-bottom:1px solid #e5e7eb;\">{{ $('Calcular Horarios Libres').first().json.solicitado.hora_inicio }} a {{ $('Calcular Horarios Libres').first().json.solicitado.hora_fin }} hs</td></tr>\n            <tr><td style=\"padding:12px 16px;color:#6b7280;border-bottom:1px solid #e5e7eb;\">Dirección</td><td style=\"padding:12px 16px;border-bottom:1px solid #e5e7eb;\">Av. Siempre Viva 123</td></tr>\n            <tr><td style=\"padding:12px 16px;color:#6b7280;border-bottom:1px solid #e5e7eb;\">A nombre de</td><td style=\"padding:12px 16px;border-bottom:1px solid #e5e7eb;\">{{ $('Validar Parámetros').first().json.cliente.nombre }} {{ $('Validar Parámetros').first().json.cliente.apellido }}</td></tr>\n            <tr><td style=\"padding:12px 16px;color:#6b7280;\">Teléfono de contacto</td><td style=\"padding:12px 16px;\">{{ $('Validar Parámetros').first().json.cliente.telefono || '—' }}</td></tr>\n          </table>\n          <p style=\"font-size:14px;line-height:1.6;color:#4b5563;margin:24px 0 0;\">Si necesitás modificar tu turno, respondé a este correo.</p>\n          <p style=\"font-size:15px;margin:24px 0 0;\">¡Te esperamos!</p>\n        </td></tr>\n        <tr><td style=\"background:#f8fafc;padding:20px 32px;border-top:1px solid #e5e7eb;font-size:13px;color:#64748b;\">\n          <strong style=\"color:#0f172a;\">Electrónica Cobra</strong><br>Av. Siempre Viva 123\n        </td></tr>\n      </table>\n    </td></tr>\n  </table>\n</body>\n</html>\n"
+            },
+            {
+              "id": "d416beae-0266-45f0-8250-cd61833ff141",
+              "name": "texto_chat",
+              "type": "string",
+              "value": "=✅ **Tu turno quedó confirmado**\n\nHola {{ $('Validar Parámetros').first().json.cliente.nombre }}, estos son los detalles:\n\n📅 **Fecha:** {{ $('Calcular Horarios Libres').first().json.solicitado.fecha_larga.charAt(0).toUpperCase() + $('Calcular Horarios Libres').first().json.solicitado.fecha_larga.slice(1) }}\n🕘 **Horario:** {{ $('Calcular Horarios Libres').first().json.solicitado.hora_inicio }} a {{ $('Calcular Horarios Libres').first().json.solicitado.hora_fin }} hs\n📍 **Dirección:** Av. Siempre Viva 123\n👤 **A nombre de:** {{ $('Validar Parámetros').first().json.cliente.nombre }} {{ $('Validar Parámetros').first().json.cliente.apellido }}\n📞 **Teléfono de contacto:** {{ $('Validar Parámetros').first().json.cliente.telefono || '—' }}\n\n¡Te esperamos!"
+            },
+            {
+              "id": "01fd66ac-28c4-419f-82b3-b7350385fac7",
+              "name": "evento_id",
+              "type": "string",
+              "value": "={{ $json.id }}"
+            },
+            {
+              "id": "472edbf3-eedc-442d-8630-31a30ebbe40c",
+              "name": "evento_link",
+              "type": "string",
+              "value": "={{ $json.htmlLink }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "2ed4ee37-6b38-4f45-8e8c-54b50aa38fb8",
+      "name": "Redactar Confirmación",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2200,
+        -20
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Validar Parámetros').first().json.cliente.email }}",
+        "subject": "={{ $json.asunto }}",
+        "emailType": "html",
+        "message": "={{ $json.html }}",
+        "options": {
+          "appendAttribution": false,
+          "senderName": "Electrónica Cobra"
+        }
+      },
+      "id": "782ff903-ac09-4d99-8225-a7babfcdeb49",
+      "name": "Gmail: Enviar Confirmación",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2420,
+        -20
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "cb4qjmvFqcy38LiC",
+          "name": "Gmail account"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "webhookId": "c0b7a000-5e70-4000-8000-000000000002"
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={\n  \"status\": \"success\",\n  \"worker\": \"turnos\",\n  \"accion\": \"RESERVAR\",\n  \"data\": {\n    \"reservado\": true,\n    \"email_enviado\": true,\n    \"evento_id\": {{ JSON.stringify($('Redactar Confirmación').first().json.evento_id) }},\n    \"evento_link\": {{ JSON.stringify($('Redactar Confirmación').first().json.evento_link) }},\n    \"inicio\": {{ JSON.stringify($('Calcular Horarios Libres').first().json.solicitado.inicio_iso) }},\n    \"fin\": {{ JSON.stringify($('Calcular Horarios Libres').first().json.solicitado.fin_iso) }},\n    \"cliente_email\": {{ JSON.stringify($('Validar Parámetros').first().json.cliente.email) }}\n  },\n  \"mensaje\": {{ JSON.stringify($('Redactar Confirmación').first().json.texto_chat + '\\n\\n📧 Te enviamos esta confirmación a **' + $('Validar Parámetros').first().json.cliente.email + '**.') }},\n  \"error\": null\n}",
+        "options": {}
+      },
+      "id": "128423f9-efd4-4c7c-8ef7-be72a7726746",
+      "name": "Contrato de Salida: Turno Confirmado",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2640,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={\n  \"status\": \"error\",\n  \"worker\": \"turnos\",\n  \"accion\": \"RESERVAR\",\n  \"data\": {\n    \"reservado\": true,\n    \"email_enviado\": false,\n    \"evento_id\": {{ JSON.stringify($('Redactar Confirmación').first().json.evento_id) }},\n    \"evento_link\": {{ JSON.stringify($('Redactar Confirmación').first().json.evento_link) }},\n    \"inicio\": {{ JSON.stringify($('Calcular Horarios Libres').first().json.solicitado.inicio_iso) }},\n    \"fin\": {{ JSON.stringify($('Calcular Horarios Libres').first().json.solicitado.fin_iso) }},\n    \"cliente_email\": {{ JSON.stringify($('Validar Parámetros').first().json.cliente.email) }}\n  },\n  \"mensaje\": {{ JSON.stringify($('Redactar Confirmación').first().json.texto_chat + '\\n\\n⚠️ No pudimos enviar el correo de confirmación a ' + $('Validar Parámetros').first().json.cliente.email + '. Ya avisamos a nuestro equipo.') }},\n  \"error\": { \"codigo\": \"GMAIL_ENVIO\", \"nodo\": \"Gmail: Enviar Confirmación\", \"detalle\": {{ JSON.stringify(String($json.error?.message ?? $json.error ?? 'Error desconocido')) }} }\n}",
+        "options": {}
+      },
+      "id": "506d1007-a9c0-494d-8dcf-06ee759ef779",
+      "name": "Contrato de Salida: Turno sin Email",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2640,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={\n  \"status\": \"error\",\n  \"worker\": \"turnos\",\n  \"accion\": {{ JSON.stringify($('Entrada: Contrato Turnos').first().json.accion) }},\n  \"data\": null,\n  \"mensaje\": \"En este momento no puedo acceder a la agenda para gestionar tu turno. Ya derivé el caso a nuestro equipo para que lo revise.\",\n  \"error\": {\n    \"codigo\": \"TURNOS_FALLA_TECNICA\",\n    \"nodo\": {{ JSON.stringify($prevNode.name) }},\n    \"detalle\": {{ JSON.stringify(String($json.error?.message ?? $json.error ?? 'Error desconocido')) }}\n  }\n}",
+        "options": {}
+      },
+      "id": "158f14c1-e52a-4770-805f-cb31bbc82b1b",
+      "name": "Contrato de Salida: Error Técnico",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1980,
+        260
+      ]
+    },
+    {
+      "id": "ceb3374a-a616-4069-aa36-4d62d66da4ab",
+      "name": "¿Consultar mis turnos?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        660,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "b5bd7895-20d0-4354-a70c-e6614cebb6ec",
+              "leftValue": "={{ $json.accion }}",
+              "rightValue": "CONSULTAR_TURNOS",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "8b6353cb-fd73-4545-8a1f-7fa653624809",
+      "name": "Google Calendar: Mis Turnos",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        880,
+        200
+      ],
+      "parameters": {
+        "resource": "event",
+        "operation": "getAll",
+        "calendar": {
+          "__rl": true,
+          "value": "ID_DEL_CALENDARIO@group.calendar.google.com",
+          "mode": "id"
+        },
+        "returnAll": false,
+        "limit": 100,
+        "timeMin": "={{ $now.toISO() }}",
+        "timeMax": "={{ $now.plus({ days: 365 }).toISO() }}",
+        "options": {
+          "query": "={{ $('Validar Parámetros').first().json.cliente.email }}",
+          "timeZone": {
+            "__rl": true,
+            "value": "America/Argentina/Buenos_Aires",
+            "mode": "id"
+          }
+        }
+      },
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "X4ixg58y0MR7cKqE",
+          "name": "Google Calendar account"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "id": "abcd740c-4350-4514-8e2d-36f5eb0b9fc6",
+      "name": "Armar Mis Turnos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// Arma la lista de turnos futuros del cliente. El turno pertenece al cliente si su email figura en la descripción\n// del evento (así los crea este Worker). Se devuelven solo día y hora: nunca nombre, teléfono ni otros datos del evento.\nconst TZ = 'America/Argentina/Buenos_Aires';\nconst MAX_LISTA = 10;\nconst p = $('Validar Parámetros').first().json;\nconst items = $input.all().map((i) => i.json);\nconst falla = items.find((e) => e && e.error);\nif (falla) throw new Error('Google Calendar: ' + String(falla.error.message ?? falla.error));\n\nconst escapar = (s) => s.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');\nconst reEmail = new RegExp('(^|\\\\n)\\\\s*Email:\\\\s*' + escapar(String(p.cliente.email).trim()) + '\\\\s*(\\\\n|$)', 'i');\nconst ahora = DateTime.now().setZone(TZ);\nconst cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);\n\nconst turnos = items\n  .filter((e) => e && e.id && e.status !== 'cancelled' && e.start?.dateTime && reEmail.test(String(e.description ?? '')))\n  .map((e) => ({\n    ini: DateTime.fromISO(e.start.dateTime, { zone: TZ }),\n    fin: DateTime.fromISO(e.end?.dateTime ?? e.start.dateTime, { zone: TZ }),\n  }))\n  .filter((t) => t.ini > ahora)\n  .sort((a, b) => a.ini.toMillis() - b.ini.toMillis());\n\nconst etiqueta = (t) => `${cap(t.ini.setLocale('es').toFormat('cccc dd/LL'))} de ${t.ini.toFormat('HH:mm')} a ${t.fin.toFormat('HH:mm')} hs`;\nconst lista = turnos.slice(0, MAX_LISTA);\nconst mensaje = turnos.length\n  ? `Estos son tus próximos turnos reservados:\\n\\n${lista.map((t) => '• ' + etiqueta(t)).join('\\n')}` +\n    (turnos.length > MAX_LISTA ? `\\n\\n_(Te muestro los próximos ${MAX_LISTA}.)_` : '')\n  : 'No encontré turnos reservados a futuro con tu correo registrado. ¿Querés ver la disponibilidad o reservar uno?';\n\nreturn [{ json: {\n  total: turnos.length,\n  turnos: lista.map((t) => ({ inicio: t.ini.toISO(), fin: t.fin.toISO(), etiqueta: etiqueta(t) })),\n  mensaje,\n} }];\n"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "78d03214-70e2-4271-9093-f11fa7f1085b",
+      "name": "Contrato de Salida: Mis Turnos",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1320,
+        200
+      ],
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={\n  \"status\": \"success\",\n  \"worker\": \"turnos\",\n  \"accion\": \"CONSULTAR_TURNOS\",\n  \"data\": { \"total\": {{ $json.total }}, \"turnos\": {{ JSON.stringify($json.turnos) }} },\n  \"mensaje\": {{ JSON.stringify($json.mensaje) }},\n  \"error\": null\n}",
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Entrada: Contrato Turnos": {
+      "main": [
+        [
+          {
+            "node": "Validar Parámetros",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar Parámetros": {
+      "main": [
+        [
+          {
+            "node": "¿Parámetros válidos?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Contrato de Salida: Error Técnico",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Parámetros válidos?": {
+      "main": [
+        [
+          {
+            "node": "¿Consultar mis turnos?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Contrato de Salida: Solicitud Incompleta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Años (Feriados)": {
+      "main": [
+        [
+          {
+            "node": "API Feriados (ArgentinaDatos)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API Feriados (ArgentinaDatos)": {
+      "main": [
+        [
+          {
+            "node": "Consolidar Feriados",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consolidar Feriados": {
+      "main": [
+        [
+          {
+            "node": "Google Calendar: Horarios Ocupados",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Calendar: Horarios Ocupados": {
+      "main": [
+        [
+          {
+            "node": "Calcular Horarios Libres",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Contrato de Salida: Error Técnico",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calcular Horarios Libres": {
+      "main": [
+        [
+          {
+            "node": "¿Reservar turno?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Contrato de Salida: Error Técnico",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Reservar turno?": {
+      "main": [
+        [
+          {
+            "node": "Google Calendar: Registrar Turno",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Contrato de Salida: Disponibilidad",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Calendar: Registrar Turno": {
+      "main": [
+        [
+          {
+            "node": "Redactar Confirmación",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Contrato de Salida: Error Técnico",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Redactar Confirmación": {
+      "main": [
+        [
+          {
+            "node": "Gmail: Enviar Confirmación",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail: Enviar Confirmación": {
+      "main": [
+        [
+          {
+            "node": "Contrato de Salida: Turno Confirmado",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Contrato de Salida: Turno sin Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Consultar mis turnos?": {
+      "main": [
+        [
+          {
+            "node": "Google Calendar: Mis Turnos",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Preparar Años (Feriados)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Calendar: Mis Turnos": {
+      "main": [
+        [
+          {
+            "node": "Armar Mis Turnos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Armar Mis Turnos": {
+      "main": [
+        [
+          {
+            "node": "Contrato de Salida: Mis Turnos",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Contrato de Salida: Error Técnico",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Argentina/Buenos_Aires",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "executionTimeout": 60,
+    "availableInMCP": false
+  }
+}
